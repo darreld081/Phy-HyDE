@@ -7,6 +7,7 @@ This repo currently holds the data and baseline-model code that Phy-HyDE builds 
 |---|---|---|---|
 | A. Fashion CFG baseline | `fashion_cfg_diffusion.py`, `make_captions.py` | DeepFashion images | Class-conditional DDPM with classifier-free guidance (CFG), plus evaluation (FID, classifier accuracy, precision/recall) and a caption generator |
 | B. Tahoe single-cell pipeline | `Tahoe_subset_to_Google_Drive.ipynb`, `Tahoe_PyTorch_train_validation.ipynb` | Tahoe-100M perturbation transcriptomics | Downloads a balanced subset, builds train/validation loaders, and reduces expression to 50 PCs for diffusion/flow models |
+| C. Comparison methods | `notebooks/recent_methods/`, `src/guidance/` | both | TC-LoRA, text cross-attention and training-free guidance (TFG) on the Part A and Part B base models, one notebook per method and modality, with a shared evaluation and a manifest per run |
 
 No datasets, checkpoints or outputs are committed. You supply the data as described below.
 
@@ -116,3 +117,45 @@ Everything is fit on training cells only:
 
 `TahoePCs` serves batches with `pcs` (B x 50, scaled), `drug`, `cell_line_id`, `cluster`, `is_control`. `pcs_to_hvg_expression` maps samples back to the 2,000-gene space (lossy). Results are saved next to the split index with `pca_manifest.json` and can be downloaded as a zip (cells 38 and 48-49) to reuse in another notebook. Section 7f (checks and plots) is optional. Set `MAX_BATCHES` for a quick partial trial that writes to a separate `_smoke` folder.
 
+---
+
+## Part C: comparison methods
+
+One notebook per method and modality, built on the base models of Parts A and B. Shared code
+lives in `src/guidance/`; the first cell of every notebook finds it in a checkout or clones this
+repo on Colab.
+
+```
+notebooks/recent_methods/
+  tahoe/    cfg_cells.ipynb   tc_lora_cells.ipynb   text_xattn_cells.ipynb   tfg_cells.ipynb
+  fashion/  cfg_fashion.ipynb tc_lora_fashion.ipynb text_xattn_fashion.ipynb tfg_fashion.ipynb
+src/guidance/
+  baselines/  tc_lora.py  cross_attention.py  tfg.py     one file per method; provenance and every deviation from the paper in the header
+  data/       cells.py  fashion.py                       loaders, splits and condition texts
+  eval/       cell_metrics.py  image_metrics.py          metrics shared by all notebooks of a modality
+```
+
+| Notebook | Method | Paper | Official code | What trains | Condition |
+|---|---|---|---|---|---|
+| `cfg_*` | classifier-free guidance | Ho & Salimans, [arXiv:2207.12598](https://arxiv.org/abs/2207.12598) (NeurIPS 2021 workshop) | none released | the base model, with the Part A / Part B recipe | class label (fashion) or (cell line, drug) pair (Tahoe) |
+| `tc_lora_*` | TC-LoRA | Cho et al., [arXiv:2510.09561](https://arxiv.org/abs/2510.09561) (SpaVLE @ NeurIPS 2025) | none released | a hypernetwork that writes per-step LoRA factors for the frozen base | CLIP embedding of the caption / pair description |
+| `text_xattn_*` | text cross-attention | PixArt-α, Chen et al., [arXiv:2310.00426](https://arxiv.org/abs/2310.00426) (ICLR 2024) | [github.com/PixArt-alpha/PixArt-alpha](https://github.com/PixArt-alpha/PixArt-alpha) | one cross-attention block on the frozen base | CLIP token embeddings of the same text |
+| `tfg_*` | training-free guidance | TFG, Ye et al., [arXiv:2409.15761](https://arxiv.org/abs/2409.15761) (NeurIPS 2024) | [github.com/YWolfeee/Training-Free-Guidance](https://github.com/YWolfeee/Training-Free-Guidance) | nothing; a fixed classifier steers sampling | target class / drug |
+
+Run `cfg_*` first: it trains the base and writes `checkpoints/…/best.pt`, which the other three
+notebooks load so all four sit on the same weights. Run the notebooks of one modality from the
+same folder.
+
+Data: Tahoe notebooks read the PCA folder produced by Part B (unzipped next to the notebook,
+under `data/` at the repo root, or the path in `TAHOE_PCA_DIR`). Fashion notebooks read the
+DeepFashion folders of Part A plus `captions.csv` from `make_captions.py` (next to the notebook,
+under `data/`, or `FASHION_ROOT` / `FASHION_CAPTIONS`); the classifier from `models/` is picked
+up automatically.
+
+Every notebook prints its config first (any field can be set from the environment as
+`CFG_<NAME>`, e.g. `CFG_LIMIT=5000 CFG_BASE_EPOCHS=1` for a smoke run), evaluates on held-out
+conditions with the same metrics for every method, and ends by writing `manifest_<name>.json`
+with the commit, config, hardware, training time and every reported number. Adapters are
+checked to equal the base at initialisation; TFG is checked to equal plain sampling at zero
+guidance; sample rows whose variance leaves the data range are flagged before any metric is
+read.
