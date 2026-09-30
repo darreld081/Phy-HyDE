@@ -138,10 +138,58 @@ src/guidance/
 
 | Notebook | Method | Paper | Official code | What trains | Condition |
 |---|---|---|---|---|---|
-| `cfg_*` | classifier-free guidance | Ho & Salimans, [arXiv:2207.12598](https://arxiv.org/abs/2207.12598) (NeurIPS 2021 workshop) | none released | the base model, with the Part A / Part B recipe | class label (fashion) or (cell line, drug) pair (Tahoe) |
+| `cfg_*` | label embedding + classifier-free guidance | Ho & Salimans, [arXiv:2207.12598](https://arxiv.org/abs/2207.12598) (NeurIPS 2021 workshop) | none released | the base model, with the Part A / Part B recipe | class label (fashion) or (cell line, drug) pair (Tahoe) |
 | `tc_lora_*` | TC-LoRA | Cho et al., [arXiv:2510.09561](https://arxiv.org/abs/2510.09561) (SpaVLE @ NeurIPS 2025) | none released | a hypernetwork that writes per-step LoRA factors for the frozen base | CLIP embedding of the caption / pair description |
 | `text_xattn_*` | text cross-attention | PixArt-α, Chen et al., [arXiv:2310.00426](https://arxiv.org/abs/2310.00426) (ICLR 2024) | [github.com/PixArt-alpha/PixArt-alpha](https://github.com/PixArt-alpha/PixArt-alpha) | one cross-attention block on the frozen base | CLIP token embeddings of the same text |
 | `tfg_*` | training-free guidance | TFG, Ye et al., [arXiv:2409.15761](https://arxiv.org/abs/2409.15761) (NeurIPS 2024) | [github.com/YWolfeee/Training-Free-Guidance](https://github.com/YWolfeee/Training-Free-Guidance) | nothing; a fixed classifier steers sampling | target class / drug |
+
+### The four methods
+
+**Label embedding with classifier-free guidance (`cfg_*`)**
+Method: the base model itself. The condition enters through a learned embedding (the class label,
+or the drug and cell-line ids) added to the timestep embedding. During training the embedding is
+replaced by a blank label 10% of the time, so the same network can also predict without the
+condition. Classifier-free guidance is the sampling step that uses both branches: run the network
+with and without the condition and combine the two outputs with a weight w. w = 1 is plain
+conditional sampling; larger w pushes harder toward the condition.
+Why: this is how the Part A and Part B base models are conditioned, and CFG is the standard
+guidance method, so this row is the reference for both questions: how the condition gets in, and
+what extra guidance buys.
+Ours: the recipes unchanged. For Tahoe the drug and cell line are blanked together, and the
+evaluation uses held-out (cell line, drug) pairs at w = 0, 1, 3 and 6.
+
+**TC-LoRA (`tc_lora_*`)**
+Method: the diffusion model is frozen. A small second network, the hypernetwork, reads the
+timestep and the condition and outputs LoRA weight updates for the frozen model. Only the
+hypernetwork is trained, so the update can differ at every step and for every condition.
+Why: this project builds a hypernetwork that controls a diffusion model, and TC-LoRA is the
+closest published version of that idea.
+Ours: written from the paper, since no code was released. The paper adapts attention layers in a
+transformer and uses a depth map as the condition. We adapt the convolutions of the U-Net and the
+linear layers of the MLP, use a CLIP embedding of the caption or the pair description as the
+condition, and give the frozen model a blank label so the text is its only source of the
+condition.
+
+**Text cross-attention (`text_xattn_*`)**
+Method: the diffusion model is frozen and one cross-attention block is added. The block lets the
+model's features attend to the text tokens. Only the block is trained.
+Why: cross-attention is how text-to-image models read text, so it is the standard
+text-conditioning baseline.
+Ours: PixArt-α has such a block in every layer and trains the whole model. We add one block, at
+the U-Net bottleneck or after the MLP's input projection, use CLIP tokens instead of T5, and train
+nothing else. Sampling uses no guidance.
+
+**Training-free guidance (`tfg_*`)**
+Method: nothing is trained. At each sampling step the model predicts the clean sample, a
+classifier scores it for the target class, and the sample is nudged along the gradient of that
+score.
+Why: it is the training-free alternative: no conditioning is learned, and the classifier does all
+the work at sampling.
+Ours: TFG needs an unconditional model and a classifier. The base model run with a blank label
+serves as the unconditional model; for Tahoe the cell line is still given and only the drug is
+blank. The classifier is a ResNet fine-tuned on DeepFashion for images and, for Tahoe, a Gaussian
+classifier per drug fitted on the training cells. The predicted clean sample is clamped to the
+data range, as the paper does with [-1, 1] pixels. A different classifier scores the results.
 
 ### Running
 
